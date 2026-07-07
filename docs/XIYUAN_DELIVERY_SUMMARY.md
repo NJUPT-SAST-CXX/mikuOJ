@@ -40,7 +40,7 @@ Compiler 主负责文件：
 Sandbox Core 负责一次沙箱运行任务的生命周期编排：
 
 ```text
-接收 SandboxRequest
+接收 SandboxConfig / SandboxRequest
   -> 选择 linux-ns / nsjail 安全后端
   -> 准备 work_dir、mount、stdio
   -> clone 隔离子进程
@@ -71,7 +71,7 @@ Compiler 负责把用户提交准备成可运行目标：
   -> 查询 Language Manager
   -> 复制源码到 work_dir
   -> 如果是解释型语言：跳过编译，返回解释器运行信息
-  -> 如果是编译型语言：构造 SandboxRequest
+  -> 如果是编译型语言：构造 SandboxConfig / SandboxRequest
   -> 调用 Sandbox Core 在沙箱内执行编译器
   -> 读取编译器输出
   -> 检查编译产物
@@ -140,7 +140,9 @@ Sandbox Core 负责在子进程中按正确顺序调用这些能力。
 
 - `linux-ns` 安全沙箱后端。
 - `auto / linux-ns / nsjail` 后端类型入口。
-- SandboxRequest / SandboxResult 统一接口。
+- `SandboxConfig` / `SandboxRequest` / `SandboxResult` 统一接口。
+- 与任务手册一致的 `Sandbox::execute(const SandboxConfig&)` 对外接口。
+- 与任务手册一致的 `Compiler::compile(source_file, lang, work_dir)` 和 `Compiler::copy_source(...)` 对外接口。
 - 编译型语言在沙箱内编译。
 - 解释型语言跳过编译。
 - cgroup v2 内存、swap、进程数限制。
@@ -163,13 +165,15 @@ Sandbox Core 负责在子进程中按正确顺序调用这些能力。
 ```bash
 cmake --build build -j
 ctest --test-dir build -L unit --output-on-failure
+sudo ctest --test-dir build -R CompilerApi.CompileCppViaSandboxWhenPrivileged --output-on-failure
 sudo ctest --test-dir build -L integration --output-on-failure
 ```
 
 结果：
 
 - `cmake --build build -j`：通过。
-- `ctest --test-dir build -L unit --output-on-failure`：通过，53 个单元测试全部通过，其中 3 个因环境条件按预期跳过。
+- `ctest --test-dir build -L unit --output-on-failure`：通过，58 个单元测试全部通过，其中 4 个因非 root 环境条件按预期跳过。
+- `sudo ctest --test-dir build -R CompilerApi.CompileCppViaSandboxWhenPrivileged --output-on-failure`：通过，验证 C++ 编译可通过 Sandbox Core 执行。
 - `sudo ctest --test-dir build -L integration --output-on-failure`：通过，11 个集成测试全部通过。
 
 未执行：

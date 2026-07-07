@@ -42,6 +42,52 @@ bool file_exists(const std::string& path) {
 
 } // namespace
 
+CompileResult Compiler::compile(const std::string& source_file,
+                                Language lang,
+                                const std::string& work_dir) {
+    const LanguageRuntimeConfig& rt = LanguageManager::get_runtime(lang);
+    if (!rt.needs_compilation) {
+        return copy_source(source_file, lang, work_dir);
+    }
+
+    std::string error;
+    auto backend = make_sandbox("auto", error);
+    if (!backend) {
+        CompileResult r;
+        r.verdict = Verdict::SE;
+        r.error_detail = "sandbox backend unavailable: " + error;
+        return r;
+    }
+    return compile(*backend, source_file, lang, work_dir);
+}
+
+CompileResult Compiler::copy_source(const std::string& source_file,
+                                    Language lang,
+                                    const std::string& work_dir) {
+    CompileResult r;
+    const LanguageRuntimeConfig& rt = LanguageManager::get_runtime(lang);
+
+    const std::string dest = work_dir + "/" + rt.source_name;
+    std::string copy_err;
+    if (!copy_file(source_file, dest, copy_err)) {
+        r.verdict = Verdict::SE;
+        r.error_detail = copy_err;
+        return r;
+    }
+
+    if (rt.interpreter_path.empty()) {
+        r.verdict = Verdict::SE;
+        r.error_detail = "interpreter not found for language '" + rt.name + "'";
+        return r;
+    }
+
+    r.success = true;
+    r.exit_code = 0;
+    r.exec_path = rt.interpreter_path;
+    r.exec_args = rt.run_args;
+    return r;
+}
+
 CompileResult Compiler::compile(SandboxBackend& backend,
                                 const std::string& source_file,
                                 Language lang,
@@ -53,7 +99,15 @@ CompileResult Compiler::compile(SandboxBackend& backend,
     // compile_args、interpreter_path、run_args、extra_mounts 和 compile_limits。
     const LanguageRuntimeConfig& rt = LanguageManager::get_runtime(lang);
 
-    // 1. 复制源码到 work_dir/<source_name>。
+    // 1. 解释型语言：无需编译。
+    //
+    // Python3 等语言在此直接返回解释器路径和脚本参数。真正执行用户程序仍由
+    // Judge 层随后构造 SandboxRequest，并通过 Sandbox Core 运行。
+    if (!rt.needs_compilation) {
+        return copy_source(source_file, lang, work_dir);
+    }
+
+    // 2. 复制源码到 work_dir/<source_name>。
     //
     // 后续编译命令和解释器运行参数都以 work_dir 为当前目录，因此 compile_args
     // 和 run_args 可以使用相对路径，如 submission.cpp / Main.java / submission.py。
@@ -62,22 +116,6 @@ CompileResult Compiler::compile(SandboxBackend& backend,
     if (!copy_file(source_file, dest, copy_err)) {
         r.verdict = Verdict::SE;
         r.error_detail = copy_err;
-        return r;
-    }
-
-    // 2. 解释型语言：无需编译。
-    //
-    // Python3 等语言在此直接返回解释器路径和脚本参数。真正执行用户程序仍由
-    // Judge 层随后构造 SandboxRequest，并通过 Sandbox Core 运行。
-    if (!rt.needs_compilation) {
-        if (rt.interpreter_path.empty()) {
-            r.verdict = Verdict::SE;
-            r.error_detail = "interpreter not found for language '" + rt.name + "'";
-            return r;
-        }
-        r.success = true;
-        r.exec_path = rt.interpreter_path;
-        r.exec_args = rt.run_args;
         return r;
     }
 

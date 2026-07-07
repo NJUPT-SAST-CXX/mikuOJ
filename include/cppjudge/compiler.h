@@ -29,6 +29,11 @@ struct CompileResult {
 
 class Compiler {
 public:
+    // 对外课程/任务接口：自动选择默认安全沙箱后端完成编译或源码复制。
+    static CompileResult compile(const std::string& source_file,
+                                 Language lang,
+                                 const std::string& work_dir);
+
     // 用给定沙箱后端把提交准备到 work_dir。
     //
     // 编译型语言：
@@ -46,6 +51,11 @@ public:
                                  const std::string& source_file,
                                  Language lang,
                                  const std::string& work_dir);
+
+    // 仅复制源文件到工作目录，用于解释型语言或单元测试。
+    static CompileResult copy_source(const std::string& source_file,
+                                     Language lang,
+                                     const std::string& work_dir);
 };
 
 } // namespace cppjudge

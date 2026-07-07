@@ -9,11 +9,11 @@
 namespace cppjudge {
 
 // ============================================================
-// Sandbox Core 对外输入：单次沙箱执行请求。
+// Sandbox Core 对外输入：单次沙箱执行配置。
 //
-// 该结构由 Compiler 或 Judge/CLI 调度层构造，由 SandboxBackend::execute()
-// 消费。Sandbox Core 只接收已经整理好的运行配置，不负责解析命令行、
-// 加载题目，也不负责比较输出。
+// 该结构由 Compiler 或 Judge/CLI 调度层构造，由 Sandbox::execute() 或
+// SandboxBackend::execute() 消费。Sandbox Core 只接收已经整理好的运行配置，
+// 不负责解析命令行、加载题目，也不负责比较输出。
 //
 // 注意：
 //   1. executable 必须是宿主机上的绝对路径，Linux 后端会把它映射进沙箱。
@@ -22,7 +22,7 @@ namespace cppjudge {
 //   4. extra_mounts 来自 Language Manager，用于挂载编译器、解释器和运行时依赖。
 //   5. is_compile 用于区分编译阶段和运行阶段，便于选择不同的 seccomp 策略。
 // ============================================================
-struct SandboxRequest {
+struct SandboxConfig {
     Limits      limits;
     std::string executable;                    // 要执行的可执行文件（解释器或编译产物，绝对路径）
     std::vector<std::string> argv;             // executable 之后的参数（不含 argv[0]）
@@ -35,6 +35,9 @@ struct SandboxRequest {
     bool        is_compile = false;            // 编译阶段：放宽 syscall 策略（见 D6）
     std::vector<ns::MountEntry> extra_mounts;  // 语言运行时依赖（仅 Linux 后端使用）
 };
+
+// 内部实现沿用 SandboxRequest 命名；对外课程/任务接口使用 SandboxConfig。
+using SandboxRequest = SandboxConfig;
 
 // ============================================================
 // Sandbox Core 对外输出：单次沙箱执行结果。
@@ -52,6 +55,18 @@ struct SandboxResult {
     uint64_t    memory_kb        = 0;   // 峰值 RSS
     bool        output_truncated = false;
     std::string error_detail;           // SE 时判题系统内部错误细节
+};
+
+// ============================================================
+// Sandbox Core 对外门面接口。
+//
+// 该接口与任务手册中的 cppjudge::Sandbox::execute(const SandboxConfig&) 保持一致。
+// 内部实现仍复用 make_sandbox("auto") 和正式安全后端，避免把后端选择、Linux
+// namespace/cgroup/seccomp 细节暴露给调用方。
+// ============================================================
+class Sandbox {
+public:
+    static SandboxResult execute(const SandboxConfig& config);
 };
 
 // ============================================================

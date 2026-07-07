@@ -157,9 +157,11 @@ Compiler 主要落在：
 
 阶段一具体工作：
 
-- 整理 `SandboxRequest` 的字段含义，明确它是 Compiler / Judge 传给 Sandbox Core 的单次运行请求。
+- 整理 `SandboxConfig` / `SandboxRequest` 的字段含义，明确它是 Compiler / Judge 传给 Sandbox Core 的单次运行请求。
+- 补齐任务手册要求的对外名称 `SandboxConfig`，并保留内部兼容别名 `SandboxRequest`。
+- 补齐任务手册要求的对外门面 `Sandbox::execute(const SandboxConfig&)`。
 - 整理 `SandboxResult` 的字段含义，明确它是 Sandbox Core 返回给上层的统一运行结果。
-- 整理 `SandboxBackend` 的接口契约，明确 `execute()` 负责一次沙箱执行，`name()` 用于日志和诊断。
+- 整理 `SandboxBackend` 的接口契约，明确它是内部后端抽象，`execute()` 负责一次沙箱执行，`name()` 用于日志和诊断。
 - 整理 `make_sandbox()` 的后端选择规则，明确当前正式后端类型为 `auto`、`linux-ns`、`nsjail`。
 - 整理内部辅助结构 `RawOutcome`，说明它负责承接 wait status、signal、cgroup 统计等底层观测量。
 - 明确判决推导边界：Sandbox Core 负责 AC/TLE/MLE/OLE/RE/SV/SE 等运行侧结果，WA 由 Comparator 在之后判断。
@@ -258,6 +260,10 @@ Compiler 主要落在：
 - 明确编译成功条件：Sandbox 返回 `AC`、编译器退出码为 0、目标 artifact 存在。
 - 明确编译失败时收集 `compile_stdout.txt` 和 `compile_stderr.txt`，作为 `CompileResult::output` 返回。
 - 明确 Sandbox Core 自身故障不能伪装成 CE，必须作为 SE 返回。
+- 补齐任务手册要求的对外接口 `Compiler::compile(source_file, lang, work_dir)`。
+- 补齐任务手册要求的对外接口 `Compiler::copy_source(source_file, lang, work_dir)`。
+- 新增 `tests/unit/test_compiler.cpp`，覆盖解释型语言复制、公开 compile 接口，以及 root 环境下的 C++ 沙箱编译。
+- 新增 `tests/unit/test_sandbox.cpp`，覆盖 `SandboxConfig`、`SandboxRequest` 兼容别名和 `Sandbox::execute()` 对外门面。
 
 阶段四不做的事情：
 
@@ -299,7 +305,8 @@ Compiler 主要落在：
 当前阶段五验证状态：
 
 - `cmake --build build -j`：已在 VM 通过。
-- `ctest --test-dir build -L unit --output-on-failure`：已在 VM 通过，53 个单元测试全部通过，其中 3 个因环境条件按预期跳过。
+- `ctest --test-dir build -L unit --output-on-failure`：已在 VM 通过，58 个单元测试全部通过，其中 4 个因非 root 环境条件按预期跳过。
+- `sudo ctest --test-dir build -R CompilerApi.CompileCppViaSandboxWhenPrivileged --output-on-failure`：已在 VM 通过，用 root 权限验证 C++ 编译确实经过沙箱。
 - `sudo ctest --test-dir build -L integration --output-on-failure`：已在 VM 通过，11 个集成测试全部通过。
 - `ctest -L security`：未执行，属于手动安全测试套件。
 
