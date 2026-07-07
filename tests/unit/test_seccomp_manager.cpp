@@ -44,13 +44,21 @@ TEST(Seccomp, AllProfilesAllowExecve) {
     }
 }
 
-TEST(Seccomp, NetworkAndPtraceBlocked) {
-    // socket/connect/ptrace 不在任何运行时白名单 → 默认拒绝
-    for (auto p : {SeccompProfile::Strict, SeccompProfile::JVM}) {
+TEST(Seccomp, PtraceBlockedEverywhere) {
+    for (auto p : {SeccompProfile::Strict, SeccompProfile::Standard,
+                   SeccompProfile::Extended, SeccompProfile::JVM}) {
+        EXPECT_FALSE(contains(Manager::allowlist_for_testing(p), "ptrace"));
+    }
+}
+
+TEST(Seccomp, NetworkBlockedExceptJvmLocalSockets) {
+    // Strict/Standard/Extended 禁 socket/connect。JVM 例外：需本地 socket，
+    // 真正的网络隔离由空 net namespace(CLONE_NEWNET) 保证。
+    for (auto p : {SeccompProfile::Strict, SeccompProfile::Standard,
+                   SeccompProfile::Extended}) {
         const auto& l = Manager::allowlist_for_testing(p);
         EXPECT_FALSE(contains(l, "socket"));
         EXPECT_FALSE(contains(l, "connect"));
-        EXPECT_FALSE(contains(l, "ptrace"));
     }
 }
 
