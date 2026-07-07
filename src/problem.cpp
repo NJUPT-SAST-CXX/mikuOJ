@@ -19,7 +19,7 @@ constexpr uint64_t kMaxOutputMb = 1024;
 constexpr uint64_t kMaxCompileTimeMs = 120'000;
 
 // 合法值集合。
-constexpr const char* kValidSandboxTypes[] = {"auto", "builtin", "linux-ns"};
+constexpr const char* kValidSandboxTypes[] = {"auto", "linux-ns", "nsjail"};
 constexpr const char* kValidCompareModes[] = {"exact", "floating"};
 
 // 检查字符串是否在 constexpr 数组中。
@@ -218,7 +218,7 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
 
     // 沙箱类型
     if (!contains(kValidSandboxTypes, problem.sandbox_type)) {
-        error = "sandbox_type must be one of: auto, builtin, linux-ns";
+        error = "sandbox_type must be one of: auto, linux-ns, nsjail";
         return false;
     }
 
