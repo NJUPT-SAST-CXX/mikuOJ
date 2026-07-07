@@ -5,7 +5,6 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
-#include <cmath>
 #include <fstream>
 #include <set>
 
@@ -13,10 +12,16 @@ namespace cppjudge {
 
 namespace {
 
-// ---- 合法的沙箱类型 ----
+// 各项资源限制的上界，validate() 中强制校验。
+constexpr uint64_t kMaxCpuTimeMs      = 60'000;
+constexpr uint64_t kMaxWallTimeMs     = 180'000;
+constexpr uint64_t kMaxMemoryMb       = 16 * 1024;
+constexpr uint64_t kMaxOutputMb       = 1024;
+constexpr uint64_t kMaxCompileTimeMs  = 120'000;
+
 const std::set<std::string> kValidSandboxTypes = {"auto", "builtin", "linux-ns"};
 
-// ---- yaml-cpp 读带默认值的标量（带类型错误提示） ----
+// 读取 YAML 键值，缺失时返回默认值；类型不匹配时抛出并报告键名。
 template <typename T>
 T get_or(const YAML::Node& root, const char* key, T fallback) {
     if (!root[key]) return fallback;
@@ -29,29 +34,26 @@ T get_or(const YAML::Node& root, const char* key, T fallback) {
     }
 }
 
-// ---- 从文件名提取测试点序号（严格要求完整解析） ----
+// 从文件名 stem 提取测试点序号（严格模式）。
+// 拒绝空串、前导零、非数字字符、部分解析、溢出 → 返回 -1。
 int parse_test_index(const std::string& stem) {
     if (stem.empty()) return -1;
-    // 拒绝前导零（"01" 不是合法序号）
-    if (stem.size() > 1 && stem[0] == '0') return -1;
+    if (stem.size() > 1 && stem[0] == '0') return -1;  // 拒绝前导零
     for (char c : stem) {
         if (c < '0' || c > '9') return -1;
     }
     try {
         std::size_t pos = 0;
         int val = std::stoi(stem, &pos);
-        if (pos != stem.size()) return -1;  // 部分解析拒绝
+        if (pos != stem.size()) return -1;
         return val;
     } catch (...) {
         return -1;
     }
 }
 
-} // namespace
+}  // namespace
 
-// ============================================================
-// safe_wall_time — 无溢出墙上时间
-// ============================================================
 uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
     if (cpu_time_ms == 0) return 0;
     if (cpu_time_ms > kMaxWallTimeMs / 3) return kMaxWallTimeMs;
@@ -63,7 +65,7 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
 [[nodiscard]] std::unique_ptr<Problem> ProblemManager::load(
     const std::string& problem_dir, std::string& error) {
 
-    // 规范化路径：去掉末尾 '/'
+    // 规范化路径，去掉末尾 '/'
     std::string dir = problem_dir;
     while (!dir.empty() && dir.back() == '/') dir.pop_back();
 
@@ -93,7 +95,7 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
         problem->float_abs_eps          = get_or<double>(root, "float_abs_eps", 1e-9);
         problem->float_rel_eps          = get_or<double>(root, "float_rel_eps", 1e-6);
 
-        // 墙上时间：优先 JSON 显式设置，否则 CPU × 3（安全乘法）
+        // 墙上时间：JSON 显式设置优先，否则 CPU×3
         if (root["wall_time_ms"]) {
             problem->limits.wall_time_ms = root["wall_time_ms"].as<uint64_t>();
         } else {
@@ -105,7 +107,7 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
         return nullptr;
     }
 
-    // 扫描 input/*.in
+    // 扫描 input/ 目录，收集 .in 文件
     const std::string input_dir = dir + "/input";
     DIR* dp = opendir(input_dir.c_str());
     if (dp == nullptr) {
@@ -115,9 +117,7 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
     std::vector<std::string> input_files;
     for (struct dirent* entry; (entry = readdir(dp)) != nullptr;) {
         std::string name(entry->d_name);
-        // 跳过 . / ..
         if (name == "." || name == "..") continue;
-        // 跳过目录（d_type 可用时）
         if (entry->d_type == DT_DIR) continue;
         if (name.size() >= 3 && name.compare(name.size() - 3, 3, ".in") == 0) {
             input_files.push_back(name);
@@ -126,7 +126,7 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
     closedir(dp);
     std::sort(input_files.begin(), input_files.end());
 
-    // 配对 .in → .out
+    // 将每个 .in 与对应的 .out 配对
     for (const auto& inf : input_files) {
         const std::string stem = inf.substr(0, inf.size() - 3);
         const std::string out_path = dir + "/output/" + stem + ".out";
@@ -145,7 +145,6 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
         tc.input_file = input_dir + "/" + inf;
         tc.output_file = out_path;
 
-        // 从严解析 stem → index
         int parsed = parse_test_index(stem);
         if (parsed > 0) {
             tc.index = parsed;
@@ -168,7 +167,7 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
         error = "title is empty"; return false;
     }
 
-    // ---- 上界检查 (H2) ----
+    // 时间限制
     if (problem.limits.cpu_time_ms == 0) {
         error = "time_limit_ms is 0"; return false;
     }
@@ -176,6 +175,8 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
         error = "time_limit_ms exceeds maximum (" +
                 std::to_string(kMaxCpuTimeMs) + ")"; return false;
     }
+
+    // 内存限制
     if (problem.limits.memory_mb == 0) {
         error = "memory_limit_mb is 0"; return false;
     }
@@ -183,28 +184,32 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
         error = "memory_limit_mb exceeds maximum (" +
                 std::to_string(kMaxMemoryMb) + ")"; return false;
     }
+
+    // 输出限制
     if (problem.limits.output_size_mb > kMaxOutputMb) {
         error = "output_limit_mb exceeds maximum (" +
                 std::to_string(kMaxOutputMb) + ")"; return false;
     }
+
+    // 编译时间限制
     if (problem.limits.compile_time_ms > kMaxCompileTimeMs) {
         error = "compile_time_limit_ms exceeds maximum (" +
                 std::to_string(kMaxCompileTimeMs) + ")"; return false;
     }
 
-    // ---- 比较模式 (H3) ----
+    // 比较模式
     if (problem.compare_mode != "exact" && problem.compare_mode != "floating") {
         error = "compare_mode must be 'exact' or 'floating'";
         return false;
     }
 
-    // ---- 沙箱类型 (H3) ----
+    // 沙箱类型
     if (kValidSandboxTypes.find(problem.sandbox_type) == kValidSandboxTypes.end()) {
         error = "sandbox_type must be one of: auto, builtin, linux-ns";
         return false;
     }
 
-    // ---- 浮点容差非负 (H4) ----
+    // 浮点容差不允许负值
     if (problem.float_abs_eps < 0.0) {
         error = "float_abs_eps must be >= 0";
         return false;
@@ -214,7 +219,18 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
         return false;
     }
 
-    // ---- 墙上时间合理性 ----
+    // 栈与进程数
+    if (problem.limits.stack_mb == 0) {
+        error = "stack_limit_mb is 0"; return false;
+    }
+    if (problem.limits.max_processes == 0) {
+        error = "max_processes is 0"; return false;
+    }
+    if (problem.limits.max_processes > 1024) {
+        error = "max_processes exceeds maximum (1024)"; return false;
+    }
+
+    // 墙上时间：不得低于 CPU 时间
     if (problem.limits.wall_time_ms > kMaxWallTimeMs) {
         error = "wall_time_ms exceeds maximum (" +
                 std::to_string(kMaxWallTimeMs) + ")"; return false;
@@ -231,4 +247,4 @@ uint64_t ProblemManager::safe_wall_time(uint64_t cpu_time_ms) {
     return true;
 }
 
-} // namespace cppjudge
+}  // namespace cppjudge
