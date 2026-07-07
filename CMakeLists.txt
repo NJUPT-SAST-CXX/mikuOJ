@@ -4,6 +4,12 @@ project(cppjudge VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Coverage build type (for CI: -DCMAKE_BUILD_TYPE=Coverage)
+set(CMAKE_CXX_FLAGS_COVERAGE "-g -O0 --coverage -fprofile-arcs -ftest-coverage" CACHE STRING "")
+set(CMAKE_C_FLAGS_COVERAGE "-g -O0 --coverage -fprofile-arcs -ftest-coverage" CACHE STRING "")
+set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "--coverage" CACHE STRING "")
+set(CMAKE_SHARED_LINKER_FLAGS_COVERAGE "--coverage" CACHE STRING "")
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBSECCOMP REQUIRED libseccomp)
 pkg_check_modules(YAMLCPP REQUIRED yaml-cpp)

@@ -17,8 +17,9 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential cmake \
             libseccomp-dev libyaml-cpp-dev libgtest-dev \
-            python3 default-jdk golang-go rustc
-          cd /usr/src/gtest
+            python3 default-jdk golang-go rustc gcovr
+          # Build Google Test from source (Ubuntu libgtest-dev is headers-only)
+          cd /usr/src/googletest
           sudo cmake . && sudo make
           sudo cp lib/libgtest*.a /usr/lib/
 
