@@ -1,5 +1,6 @@
 add_library(cppjudge_core STATIC
-    # 各 .cpp 文件在后续任务中添加
+    version.cpp
+    # 各模块 .cpp 文件在后续任务中添加
 )
 
 target_include_directories(cppjudge_core PUBLIC
