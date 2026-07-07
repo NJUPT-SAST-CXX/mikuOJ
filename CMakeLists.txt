@@ -25,6 +25,15 @@ set(CMAKE_C_FLAGS_COVERAGE   "-g -O0 --coverage -fprofile-arcs -ftest-coverage" 
 set(CMAKE_EXE_LINKER_FLAGS_COVERAGE    "--coverage" CACHE STRING "")
 set(CMAKE_SHARED_LINKER_FLAGS_COVERAGE "--coverage" CACHE STRING "")
 
+# Coverage 下第三方静态库（cpptrace 依赖的 zstd 等）也会被插桩，其目标文件引用
+# __gcov_* 符号。GNU ld 单遍处理静态归档，若 libgcov 的位置早于这些归档就会被提前
+# 丢弃，导致 “undefined reference to __gcov_init/_exit/_merge_add” 链接失败。把 -lgcov
+# 追加到 STANDARD_LIBRARIES（始终位于链接行末尾），确保所有归档的 gcov 引用都能解析。
+# 仅限 GNU/Linux（macOS/clang 用自带的 coverage 运行时，无 libgcov）。
+if(CMAKE_BUILD_TYPE STREQUAL "Coverage" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+  string(APPEND CMAKE_CXX_STANDARD_LIBRARIES " -lgcov")
+endif()
+
 find_package(Threads REQUIRED)
 
 include(FetchContent)
