@@ -11,7 +11,6 @@
 #include <getopt.h>
 #include <sys/stat.h>
 
-#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -69,24 +68,23 @@ void emit_result(Verdict v, int test_count = -1) {
 }
 
 void print_usage(const char* prog) {
-    std::cerr
-        << "Usage: " << prog << " <command> [options]\n\n"
-        << "Commands:\n"
-        << "  judge     Judge a submission\n"
-        << "  doctor    Check environment readiness\n"
-        << "  version   Print version\n"
-        << "  help      Show this help\n\n"
-        << "Judge options:\n"
-        << "  --problem=<dir>            Problem directory (required)\n"
-        << "  --submission=<file>        Submission file (required)\n"
-        << "  --lang=<lang>              Language override (cpp/c/python3/java/go/rust)\n"
-        << "  --time-limit-ms=<N>        CPU time limit override\n"
-        << "  --memory-limit-mb=<N>      Memory limit override\n"
-        << "  --output-limit-mb=<N>      Output size limit override\n"
-        << "  --compile-time-limit-ms=<N>\n"
-        << "  --compare-mode=<mode>      'exact' or 'floating'\n"
-        << "  --sandbox-type=<type>      'auto' | 'linux-ns' | 'nsjail'\n"
-        << "  --verbose                  Verbose diagnostics\n";
+    std::cerr << "Usage: " << prog << " <command> [options]\n\n"
+              << "Commands:\n"
+              << "  judge     Judge a submission\n"
+              << "  doctor    Check environment readiness\n"
+              << "  version   Print version\n"
+              << "  help      Show this help\n\n"
+              << "Judge options:\n"
+              << "  --problem=<dir>            Problem directory (required)\n"
+              << "  --submission=<file>        Submission file (required)\n"
+              << "  --lang=<lang>              Language override (cpp/c/python3/java/go/rust)\n"
+              << "  --time-limit-ms=<N>        CPU time limit override\n"
+              << "  --memory-limit-mb=<N>      Memory limit override\n"
+              << "  --output-limit-mb=<N>      Output size limit override\n"
+              << "  --compile-time-limit-ms=<N>\n"
+              << "  --compare-mode=<mode>      'exact' or 'floating'\n"
+              << "  --sandbox-type=<type>      'auto' | 'linux-ns' | 'nsjail'\n"
+              << "  --verbose                  Verbose diagnostics\n";
 }
 
 struct JudgeArgs {
@@ -221,17 +219,7 @@ int run_judge(int argc, char* argv[]) {
         return 3;
     }
 
-    // 生产模式 fail-closed：不安全后端拒绝运行
-    const char* env = std::getenv("CPPJUDGE_ENV");
-    const char* prod = std::getenv("CPPJUDGE_PRODUCTION");
-    const bool is_prod =
-        (env && std::string(env) == "production") || (prod && std::string(prod) == "1");
-    if (is_prod && !backend->is_secure()) {
-        spdlog::error("insecure sandbox '{}' rejected in production mode", backend->name());
-        emit_result(Verdict::SE);
-        return 3;
-    }
-    spdlog::info("sandbox backend: {} (secure={})", backend->name(), backend->is_secure());
+    spdlog::info("sandbox backend: {}", backend->name());
 
     // 运行目录
     std::string run_dir = Logger::create_run_dir("build");

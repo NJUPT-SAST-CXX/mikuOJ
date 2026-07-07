@@ -202,7 +202,7 @@ TEST(ProblemManager, ValidateRejectsInvalidSandboxType) {
 }
 
 TEST(ProblemManager, ValidateAcceptsValidSandboxTypes) {
-    for (const auto& st : {"auto", "builtin", "linux-ns"}) {
+    for (const auto& st : {"auto", "linux-ns", "nsjail"}) {
         Problem p;
         p.title = "test";
         p.limits.cpu_time_ms = 1000;
