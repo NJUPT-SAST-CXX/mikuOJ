@@ -34,4 +34,5 @@ foreach(m ${CPPJUDGE_UNIT_TESTS})
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endforeach()
 
-# 集成测试（9 判决）与安全测试在 Phase C 接入 add_subdirectory(integration)
+# 集成测试（9 判决）+ 安全测试
+add_subdirectory(integration)
