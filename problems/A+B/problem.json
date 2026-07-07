@@ -1,0 +1,9 @@
+{
+  "title": "A+B Problem",
+  "time_limit_ms": 2000,
+  "memory_limit_mb": 256,
+  "output_limit_mb": 10,
+  "compile_time_limit_ms": 5000,
+  "compare_mode": "exact",
+  "sandbox_type": "auto"
+}
