@@ -39,6 +39,9 @@
 *.out
 *.app
 
+# Judge expected-output fixtures — must be tracked despite the *.out rule above
+!problems/**/output/*.out
+
 # Build directories
 build/
 Build/
