@@ -76,11 +76,8 @@ uint64_t mono_ms() {
     };
     if (L.stack_mb)       set_rl(RLIMIT_STACK, L.stack_mb * 1024ULL * 1024ULL);
     if (L.output_size_mb) set_rl(RLIMIT_FSIZE, L.output_size_mb * 1024ULL * 1024ULL);
-#if !defined(__APPLE__)
-    // macOS 的 RLIMIT_AS 限制的是虚拟地址空间（含巨大的 dyld 共享缓存），
-    // 会误杀正常程序 → macOS 上不设，靠 RSS 计量；Linux 真限制走 cgroup。
-    if (L.memory_mb)      set_rl(RLIMIT_AS, L.memory_mb * 1024ULL * 1024ULL);
-#endif
+    // 不设 RLIMIT_AS：它限制虚拟地址空间（Go/JVM/dyld 会预留巨量虚拟内存 → 误杀）。
+    // 内存的真正限制在 linux-ns 后端由 cgroup memory.max 完成；builtin 靠 RSS 计量。
     if (L.cpu_time_ms) {  // 秒级硬后备，精确 TLE 靠父进程墙上计时 + CPU 采样
         uint64_t secs = (L.cpu_time_ms + 999) / 1000 + 1;
         set_rl(RLIMIT_CPU, secs);
@@ -129,9 +126,11 @@ SandboxResult BuiltinSandbox::execute(const SandboxRequest& req) {
                               : req.limits.cpu_time_ms * 3;
     if (wall_limit == 0) wall_limit = 10000;
 
+    const uint64_t out_cap = req.limits.output_size_mb
+                                 ? req.limits.output_size_mb * 1024ULL * 1024ULL : 0;
     int status = 0;
     struct rusage ru{};
-    bool wall_timeout = false;
+    bool wall_timeout = false, output_over = false;
     while (true) {
         pid_t w = wait4(child, &status, WNOHANG, &ru);
         if (w == child) break;
@@ -141,9 +140,12 @@ SandboxResult BuiltinSandbox::execute(const SandboxRequest& req) {
             result.error_detail = std::string("wait4 failed: ") + strerror(errno);
             return result;
         }
-        if (mono_ms() - start >= wall_limit) {
+        if (out_cap && sandbox_detail::file_size(req.stdout_path) >= out_cap) {
+            output_over = true;
+        }
+        if (output_over || mono_ms() - start >= wall_limit) {
+            wall_timeout = !output_over && (mono_ms() - start >= wall_limit);
             kill(child, SIGKILL);
-            wall_timeout = true;
             wait4(child, &status, 0, &ru);  // 已 SIGKILL，有界回收
             break;
         }
@@ -160,6 +162,7 @@ SandboxResult BuiltinSandbox::execute(const SandboxRequest& req) {
     o.secure_backend = false;
     o.wall_time_ms = wall_ms;
     o.wall_timed_out = wall_timeout;
+    o.output_exceeded = output_over;
     o.cpu_time_ms = static_cast<uint64_t>(ru.ru_utime.tv_sec) * 1000ULL +
                     ru.ru_utime.tv_usec / 1000ULL;
 #if defined(__APPLE__)

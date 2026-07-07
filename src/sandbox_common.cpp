@@ -16,6 +16,12 @@ Verdict derive_verdict(const RawOutcome& o, const Limits& limits,
         output_truncated = true;
     }
 
+    // 0. 输出超限（父进程主动 kill）—— 明确的 OLE，优先于时间/信号
+    if (o.output_exceeded) {
+        output_truncated = true;
+        return Verdict::OLE;
+    }
+
     // 1. 时间超限（墙上或 CPU）——最高优先级
     const bool cpu_over =
         o.cpu_timed_out ||

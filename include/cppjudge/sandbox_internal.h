@@ -21,6 +21,7 @@ struct RawOutcome {
     int      signal_num     = 0;
     bool     wall_timed_out = false;   // 父进程因墙上超时主动 kill
     bool     cpu_timed_out  = false;   // 后端判定 CPU 超时
+    bool     output_exceeded = false;  // 父进程因输出超限主动 kill
     bool     oom_killed     = false;   // cgroup / 观测判定 OOM
     uint64_t cpu_time_ms    = 0;       // 用户态 CPU 时间
     uint64_t wall_time_ms   = 0;

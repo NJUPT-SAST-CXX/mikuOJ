@@ -125,8 +125,13 @@ int child_main(ChildContext* ctx) {
     // 6. 丢弃权限（D3）
     if (!ns::Manager::drop_privileges()) return fail(126);
 
-    // 7. seccomp —— execve 前绝对最后一步（编译/运行不同 profile，D6）
-    if (!seccomp::Manager::install(ctx->profile, req.is_compile)) return fail(126);
+    // 7. seccomp —— execve 前绝对最后一步。
+    //   运行阶段：严格白名单（默认拒绝，违规 SIGSYS→SV）。
+    //   编译阶段：不装 seccomp —— 编译器(gcc/go/rustc/javac)可信但 syscall 面极广，
+    //     其隔离由 net namespace(无网络) + cgroup + 降权(nobody) + 最小文件系统 保证（D6）。
+    if (!req.is_compile) {
+        if (!seccomp::Manager::install(ctx->profile, false)) return fail(126);
+    }
 
     // 8. execve
     std::vector<std::string> argv_store, envp_store;
@@ -170,7 +175,10 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
     std::vector<ns::MountEntry> mounts;
     mounts.push_back({req.work_dir, kBox, true});
     for (const auto& m : req.extra_mounts) mounts.push_back(m);
-    for (const char* base : {"/lib", "/lib64", "/usr/lib", "/usr/bin"}) {
+    // 基础只读依赖。含 /usr/share：Debian/Ubuntu 下 GOROOT/src、部分 rustlib、
+    // JVM 资源以符号链接指向 /usr/share，缺它会导致 Go/Rust/Java 编译失败。
+    for (const char* base : {"/lib", "/lib64", "/usr/lib", "/usr/bin",
+                             "/usr/share", "/etc/alternatives"}) {
         mounts.push_back({base, base, false});
     }
 
@@ -240,8 +248,10 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
     const uint64_t wall_limit = req.limits.wall_time_ms
                                     ? req.limits.wall_time_ms
                                     : req.limits.cpu_time_ms * 3;
+    const uint64_t out_cap = req.limits.output_size_mb
+                                 ? req.limits.output_size_mb * 1024ULL * 1024ULL : 0;
     int status = 0;
-    bool wall_timeout = false, cpu_timeout = false;
+    bool wall_timeout = false, cpu_timeout = false, output_over = false;
     while (true) {
         pid_t w = waitpid(child, &status, WNOHANG);
         if (w == child) break;
@@ -255,7 +265,11 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
         if (req.limits.cpu_time_ms && live.cpu_usage_us / 1000ULL > req.limits.cpu_time_ms) {
             cpu_timeout = true;
         }
-        if ((wall_limit && elapsed >= wall_limit) || cpu_timeout) {
+        // 输出超限主动 kill（SIGXFSZ 未必可靠终止 busy-loop）
+        if (out_cap && sandbox_detail::file_size(req.stdout_path) >= out_cap) {
+            output_over = true;
+        }
+        if (output_over || (wall_limit && elapsed >= wall_limit) || cpu_timeout) {
             wall_timeout = wall_timeout || (wall_limit && elapsed >= wall_limit);
             cg.destroy();               // cgroup.kill 整个子树
             waitpid(child, &status, 0); // 有界回收
@@ -279,6 +293,7 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
     o.wall_time_ms = wall_ms;
     o.wall_timed_out = wall_timeout;
     o.cpu_timed_out = cpu_timeout;
+    o.output_exceeded = output_over;
     o.cpu_time_ms = stats.cpu_usage_us / 1000ULL;
     o.memory_kb = stats.memory_peak_kb ? stats.memory_peak_kb : stats.memory_kb;
     o.oom_killed = stats.oom_killed;
