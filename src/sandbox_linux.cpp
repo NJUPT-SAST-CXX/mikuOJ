@@ -1,10 +1,30 @@
-// Linux 安全沙箱后端：namespace + cgroup v2 + seccomp + 权限丢弃。
-// 子进程执行顺序（绝对不可乱）：
+// Linux 安全沙箱后端：Sandbox Core 在 Linux 上的正式执行路径。
+//
+// 本文件是 Sandbox Core 的“后端编排层”，负责把一次 SandboxRequest 串成完整生命周期：
+//   1. 父进程创建 cgroup、准备挂载清单和同步管道；
+//   2. clone 出隔离子进程；
+//   3. 子进程完成 stdio、rootfs、rlimit、降权、seccomp、execve；
+//   4. 父进程在 execve 前把子进程 attach 到 cgroup；
+//   5. 父进程 wait / 采样 cgroup / 处理超时和输出超限；
+//   6. 父进程把底层状态归一化为 SandboxResult 并清理资源。
+//
+// 子进程执行顺序（安全边界，不能随意调整）：
 //   open stdio(宿主路径) → dup2 → setup_rootfs(bind+pivot) → chdir(/box)
 //   → setrlimit → [ready→父 attach cgroup→proceed 门控] → drop_privileges
-//   → seccomp(compile/run profile) → execve
-// 修复：D1(cgroup attach-before-exec 门控) D2(挂载暂存+pivot 前开 stdio, 不继承 fd)
-//       D3(降权) D4(SIGSYS→SV) D6(编译独立 profile) D7(CPU 采样 kill) D12(errno 管道→SE)
+//   → seccomp(运行阶段) → execve
+//
+// 说明：
+//   - 编译阶段仍在 namespace + cgroup + privdrop + 最小文件系统内执行；
+//   - 运行阶段额外安装 seccomp 运行时白名单；
+//   - 判题业务、输出比较、语言配置不在本文件实现，由上层模块负责。
+//
+// 历史修复点：D1(cgroup attach-before-exec 门控)
+//            D2(挂载暂存+pivot 前开 stdio, 不继承 fd)
+//            D3(降权)
+//            D4(SIGSYS→SV)
+//            D6(编译/运行阶段安全策略区分)
+//            D7(CPU 采样 kill)
+//            D12(errno 管道→SE)
 
 #include "cppjudge/cgroup_manager.h"
 #include "cppjudge/ns_manager.h"
@@ -60,7 +80,11 @@ struct ChildContext {
     int err_w;       // 子→父：errno（CLOEXEC，execve 成功即关）→ SE
 };
 
-// 子进程入口。返回值即退出码。
+// 子进程入口。
+//
+// 这里运行在 clone 出来的隔离进程中，只做“进入沙箱并 exec 用户程序/编译器”的事情。
+// 所有 setup 错误都会通过 err_w 写回父进程，由父进程统一转换为 Verdict::SE。
+// execve 成功后，err_w 带有 CLOEXEC，会自动关闭；父进程读不到 errno 即表示进入目标程序。
 int child_main(ChildContext* ctx) {
     const SandboxRequest& req = *ctx->req;
     auto fail = [&](int code) -> int {
@@ -128,7 +152,9 @@ int child_main(ChildContext* ctx) {
     // 6. 丢弃权限（D3）
     if (!ns::Manager::drop_privileges()) return fail(126);
 
-    // 7. seccomp —— execve 前绝对最后一步。
+    // 7. Seccomp Manager 接入 —— 运行阶段 execve 前的最后安全步骤。
+    //
+    // Sandbox Core 负责安装时机，Seccomp Manager 负责 profile→syscall 白名单。
     //   运行阶段：严格白名单（默认拒绝，违规 SIGSYS→SV）。
     //   编译阶段：不装 seccomp —— 编译器(gcc/go/rustc/javac)可信但 syscall 面极广，
     //     其隔离由 net namespace(无网络) + cgroup + 降权(nobody) + 最小文件系统 保证（D6）。
@@ -158,10 +184,26 @@ public:
     const char*   name() const override { return "linux-ns"; }
 };
 
+// 执行一次 Linux 安全沙箱任务。
+//
+// 父进程负责资源所有权和观测：
+//   - cgroup 生命周期：create → apply → attach → collect → destroy；
+//   - new_root 临时目录生命周期：mkdir → 子进程 pivot 使用 → rmdir；
+//   - 同步管道生命周期：ready/proceed/err 用于保证 cgroup 在 execve 前生效；
+//   - wait 循环：处理墙上超时、CPU 超时、输出超限和子进程自然退出；
+//   - 结果归一化：RawOutcome → derive_verdict() → SandboxResult。
+//
+// 子进程只负责执行环境搭建和最终 execve，不直接生成判题结果。
 SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
     SandboxResult result;
 
-    // 1. cgroup
+    // 1. Cgroup Manager 接入。
+    //
+    // Sandbox Core 在父进程中拥有 cgroup 生命周期：
+    //   create → apply → attach(child) → collect → destroy。
+    //
+    // 这里先创建并写入 memory/pids 限制；CPU 时间不写成硬 throttle，
+    // 而是在 wait 循环里读取 cpu.stat，超过限制后 kill 整个 cgroup 子树。
     const std::string id = unique_id();
     auto cg = cgroup::Manager::create(id);
     if (!cg.is_valid()) {
@@ -232,7 +274,11 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
         return result;
     }
 
-    // 4. attach 到 cgroup（在放行前，保证 execve 前限制生效；修 D1）
+    // 4. attach 到 cgroup。
+    //
+    // 这是 Sandbox Core 和 Cgroup Manager 的关键边界：子进程已经完成 rootfs
+    // 和基础 setup，但仍被 proceed_pipe 阻塞；父进程在放行前 attach，保证
+    // execve 用户程序或编译器前，memory/pids 限制已经生效。
     cg.attach(child);
 
     // 5. 等子就绪（有界），然后放行
@@ -295,7 +341,10 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
     ssize_t n = read(err_pipe[0], &child_errno, sizeof(child_errno));
     close(err_pipe[0]);
 
-    // 8. 资源统计
+    // 8. 资源统计。
+    //
+    // Cgroup Manager 只返回原始统计；Sandbox Core 在下面把它并入 RawOutcome，
+    // 再统一推导 SandboxResult。
     cgroup::Stats stats = cg.collect();
 
     RawOutcome o;
