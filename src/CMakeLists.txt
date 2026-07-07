@@ -1,14 +1,42 @@
-add_library(cppjudge_core STATIC
+# 平台无关模块（macOS + Linux 都编译）
+set(CPPJUDGE_SOURCES
     version.cpp
-    # 各模块 .cpp 文件在后续任务中添加
+    comparator.cpp
+    problem.cpp
+    language.cpp
+    logger.cpp
+    log.cpp
+    compiler.cpp
+    doctor.cpp
+    sandbox_common.cpp
+    sandbox_builtin.cpp
 )
 
-target_include_directories(cppjudge_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
-)
+# Linux 专有：安全沙箱后端 + 隔离管理器（Phase B）
+if(UNIX AND NOT APPLE)
+    list(APPEND CPPJUDGE_SOURCES
+        sandbox_linux.cpp
+        ns_manager.cpp
+        cgroup_manager.cpp
+        seccomp_manager.cpp
+    )
+endif()
+
+add_library(cppjudge_core STATIC ${CPPJUDGE_SOURCES})
+
+target_include_directories(cppjudge_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 target_link_libraries(cppjudge_core PUBLIC
-    ${LIBSECCOMP_LIBRARIES}
-    ${YAMLCPP_LIBRARIES}
-    pthread
+    ${YAMLCPP_TARGET}
+    spdlog::spdlog
+    cpptrace::cpptrace
+    Threads::Threads
 )
+
+if(UNIX AND NOT APPLE)
+    target_include_directories(cppjudge_core PRIVATE ${LIBSECCOMP_INCLUDE_DIRS})
+    target_link_libraries(cppjudge_core PUBLIC ${LIBSECCOMP_LIBRARIES})
+endif()
+
+add_executable(cppjudge main.cpp)
+target_link_libraries(cppjudge cppjudge_core)

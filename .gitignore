@@ -68,3 +68,6 @@ vcpkg_installed/
 Testing/
 .cache/
 /tmp/
+
+# CMake gtest discovery temp files
+cmake_test_discovery_*.json
