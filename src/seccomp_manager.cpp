@@ -100,7 +100,7 @@ const std::vector<int>& Manager::get_allowlist(SeccompProfile profile) {
     return STRICT_ALLOWLIST;
 }
 
-const std::vector<int>& Manager::get_allowlist_for_testing(SeccompProfile p) {
+const std::vector<int>& Manager::allowlist_for_testing(SeccompProfile p) {
     return get_allowlist(p);
 }
 

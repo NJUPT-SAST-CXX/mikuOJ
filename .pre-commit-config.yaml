@@ -15,7 +15,7 @@ repos:
         types: [text]
       - id: no-large-files
         name: Check for large files
-        entry: bash -c 'for f in "$@"; do s=$(stat -c%s "$f"); if [ $s -gt 500000 ]; then echo "$f: $s bytes"; exit 1; fi; done' --
+        entry: "bash -c 'for f in \"$@\"; do s=\$(stat -c%s \"$f\"); if [ \$s -gt 500000 ]; then echo \"$f: \$s bytes\"; exit 1; fi; done' --"
         language: system
         files: .*
         exclude: coverage\.html

@@ -34,8 +34,8 @@ TEST(SeccompManagerTest, ViolationToString) {
 }
 
 TEST(SeccompManagerTest, AllowlistsContainExecve) {
-    const auto& strict = Manager::get_allowlist_for_testing(SeccompProfile::Strict);
-    const auto& jvm    = Manager::get_allowlist_for_testing(SeccompProfile::JVM);
+    const auto& strict = Manager::allowlist_for_testing(SeccompProfile::Strict);
+    const auto& jvm    = Manager::allowlist_for_testing(SeccompProfile::JVM);
     EXPECT_GT(strict.size(), 0u);
     EXPECT_GT(jvm.size(), strict.size());
 }

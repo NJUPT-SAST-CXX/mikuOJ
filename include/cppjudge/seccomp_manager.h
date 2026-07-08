@@ -16,7 +16,7 @@ class Manager {
    
     static std::string violation_to_string(int syscall_num);
 
-    static const std::vector<int>&get_allowlist_for_testing(SeccompProfile p);
+    static const std::vector<int>&allowlist_for_testing(SeccompProfile p);
 };
 
 } 
