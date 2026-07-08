@@ -197,6 +197,17 @@ public:
 SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
     SandboxResult result;
 
+    // Ignore SIGPIPE: if the child exits during setup it may close the read end
+    // of proceed_pipe before the parent writes to it. The default SIGPIPE action
+    // would kill the whole judge process; ignoring it lets write return EPIPE.
+    static const bool sigpipe_ignored = [] {
+        struct sigaction sa{};
+        sa.sa_handler = SIG_IGN;
+        sigaction(SIGPIPE, &sa, nullptr);
+        return true;
+    }();
+    (void)sigpipe_ignored;
+
     // 1. Cgroup Manager 接入。
     //
     // Sandbox Core 在父进程中拥有 cgroup 生命周期：
@@ -279,7 +290,19 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
     // 这是 Sandbox Core 和 Cgroup Manager 的关键边界：子进程已经完成 rootfs
     // 和基础 setup，但仍被 proceed_pipe 阻塞；父进程在放行前 attach，保证
     // execve 用户程序或编译器前，memory/pids 限制已经生效。
-    cg.attach(child);
+    //
+    // attach 失败意味着用户进程不在任何 cgroup 内：内存/pids 限制失效，且超时
+    // kill 依赖的 cgroup.kill 无法终止它，所以必须视为 SE 并杀子进程。
+    if (!cg.attach(child)) {
+        kill(child, SIGKILL);
+        waitpid(child, nullptr, 0);
+        close(ready_pipe[0]); close(proceed_pipe[1]); close(err_pipe[0]);
+        cg.destroy();
+        rmdir(new_root.c_str());
+        result.verdict = Verdict::SE;
+        result.error_detail = "failed to attach child to cgroup";
+        return result;
+    }
 
     // 5. 等子就绪（有界），然后放行
     {
@@ -294,8 +317,20 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
             result.error_detail = "child setup timed out";
             return result;
         }
-        char b; ssize_t rc = read(ready_pipe[0], &b, 1); (void)rc;
+        // 区分“子进程就绪”与“子进程 setup 中途死亡”：read 返回 0(EOF) 表示子进程已关闭
+        // ready 写端而退出，此时不能放行，应判 SE（否则 proceed 写入触发 EPIPE）。
+        char b; ssize_t rc = read(ready_pipe[0], &b, 1);
         close(ready_pipe[0]);
+        if (rc <= 0) {
+            kill(child, SIGKILL);
+            waitpid(child, nullptr, 0);
+            close(proceed_pipe[1]); close(err_pipe[0]);
+            cg.destroy();
+            rmdir(new_root.c_str());
+            result.verdict = Verdict::SE;
+            result.error_detail = "child died during setup";
+            return result;
+        }
         char go = 1; rc = write(proceed_pipe[1], &go, 1); (void)rc;
         close(proceed_pipe[1]);
     }
@@ -308,13 +343,23 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
                                  ? req.limits.output_size_mb * 1024ULL * 1024ULL : 0;
     int status = 0;
     bool wall_timeout = false, cpu_timeout = false, output_over = false;
+    bool killed = false;               // 是否走了主动 kill 路径（stats 需在 destroy 前抓取）
+    cgroup::Stats kill_stats;
     while (true) {
         pid_t w = waitpid(child, &status, WNOHANG);
         if (w == child) break;
         if (w < 0 && errno != EINTR) {
+            // waitpid 硬错误：杀子进程并直接返回 SE（不能落到 derive_verdict，否则
+            // 未 signaled/exited 的 outcome 会被判成 AC）。
+            kill(child, SIGKILL);
+            waitpid(child, nullptr, 0);
+            std::string err = std::string("waitpid: ") + strerror(errno);
+            close(err_pipe[0]);
+            cg.destroy();
+            rmdir(new_root.c_str());
             result.verdict = Verdict::SE;
-            result.error_detail = std::string("waitpid: ") + strerror(errno);
-            break;
+            result.error_detail = err;
+            return result;
         }
         uint64_t elapsed = mono_ms() - start;
         cgroup::Stats live = cg.collect();
@@ -327,6 +372,8 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
         }
         if (output_over || (wall_limit && elapsed >= wall_limit) || cpu_timeout) {
             wall_timeout = wall_timeout || (wall_limit && elapsed >= wall_limit);
+            kill_stats = cg.collect();  // 必须在 destroy 前抓取，否则统计归零
+            killed = true;
             cg.destroy();               // cgroup.kill 整个子树
             waitpid(child, &status, 0); // 有界回收
             break;
@@ -345,7 +392,8 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
     //
     // Cgroup Manager 只返回原始统计；Sandbox Core 在下面把它并入 RawOutcome，
     // 再统一推导 SandboxResult。
-    cgroup::Stats stats = cg.collect();
+    // 如果走主动 kill 路径，统计已在 destroy 前采集，否则此处 collect。
+    cgroup::Stats stats = killed ? kill_stats : cg.collect();
 
     RawOutcome o;
     o.secure_backend = true;
