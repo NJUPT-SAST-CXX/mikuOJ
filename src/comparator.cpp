@@ -29,9 +29,9 @@ std::vector<std::string> tokenize(const std::string& s) {
 // locale 无关的浮点解析（修 D17：strtod 依赖 LC_NUMERIC）。
 // 支持 nan / inf / -inf；要求整个 token 被消费。
 bool parse_double(const std::string& s, double& out) {
-    if (s == "nan" || s == "NaN")  { out = std::nan(""); return true; }
-    if (s == "inf" || s == "+inf" || s == "Infinity")  { out = HUGE_VAL;  return true; }
-    if (s == "-inf" || s == "-Infinity") { out = -HUGE_VAL; return true; }
+    if (s == "nan" || s == "NaN" || s == "NAN") { out = std::nan(""); return true; }
+    if (s == "inf" || s == "+inf" || s == "INF" || s == "Infinity")  { out = HUGE_VAL;  return true; }
+    if (s == "-inf" || s == "-INF" || s == "-Infinity") { out = -HUGE_VAL; return true; }
 
     std::istringstream iss(s);
     iss.imbue(std::locale::classic());
@@ -161,7 +161,10 @@ CompareResult Comparator::compare_floating(
 
             double diff = std::abs(uv - ev);
             if (diff <= abs_eps) continue;               // 绝对误差（边界含）
-            double denom = std::max(1.0, std::abs(ev));
+            // 相对误差：分母取两值绝对值的最大值，避免 ev 极小时退化为绝对误差。
+            // 当两者均接近零（< 1e-300）时退回绝对误差语义。
+            double denom = std::max(std::abs(uv), std::abs(ev));
+            if (denom < 1e-300) denom = 1.0;
             if (diff / denom <= rel_eps) continue;       // 相对误差
 
             result.is_match = false;

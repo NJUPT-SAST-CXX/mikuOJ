@@ -11,6 +11,12 @@ namespace cppjudge {
 enum class SeccompProfile { Strict, Standard, Extended, JVM };
 
 // 一门语言的完整运行时配置。
+//
+// Language Manager 只负责描述“怎么编译 / 怎么运行 / 需要哪些依赖”；
+// 它不直接执行编译器或用户程序。Compiler 和 Sandbox Core 消费这些配置：
+//   - Compiler 使用 compiler_path、compile_args、compile_env、compile_limits；
+//   - Sandbox Core 使用 seccomp_profile、extra_mounts 以及运行阶段 exec 信息。
+//
 //   运行模型：
 //     - needs_compilation && interpreter_path 为空  → 原生：执行 work_dir/artifact_name
 //     - interpreter_path 非空                        → 解释器/JVM：exec=interpreter_path, argv=run_args

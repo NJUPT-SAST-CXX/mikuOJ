@@ -112,26 +112,35 @@ uint64_t file_size(const std::string& path) {
 
 namespace cppjudge {
 
+SandboxResult Sandbox::execute(const SandboxConfig& config) {
+    std::string error;
+    auto backend = make_sandbox("auto", error);
+    if (!backend) {
+        SandboxResult result;
+        result.verdict = Verdict::SE;
+        result.error_detail = "sandbox backend unavailable: " + error;
+        return result;
+    }
+    return backend->execute(config);
+}
+
 std::unique_ptr<SandboxBackend> make_sandbox(const std::string& type,
                                              std::string& error) {
 #if defined(__linux__)
     if (type == "auto" || type == "linux-ns" || type == "nsjail") {
         return make_linux_ns_sandbox();
     }
-    if (type == "builtin") {
-        return make_builtin_sandbox();
-    }
-#elif defined(__APPLE__)
-    if (type == "auto" || type == "builtin") {
-        return make_builtin_sandbox();
-    }
+#else
     if (type == "linux-ns" || type == "nsjail") {
-        error = "secure Linux sandbox is unavailable on macOS (development build); "
-                "use --sandbox-type builtin";
+        error = "secure Linux sandbox is unavailable on this platform";
+        return nullptr;
+    }
+    if (type == "auto") {
+        error = "auto sandbox requires Linux";
         return nullptr;
     }
 #endif
-    error = "unknown sandbox type: '" + type + "'";
+    error = "unknown sandbox type: '" + type + "' (expected auto, linux-ns, or nsjail)";
     return nullptr;
 }
 

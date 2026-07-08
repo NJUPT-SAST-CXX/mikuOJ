@@ -1,5 +1,6 @@
 #include "cppjudge/language.h"
 
+#include <limits.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -15,6 +16,30 @@ std::string to_lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return std::tolower(c); });
     return s;
+}
+
+// 从解析出的编译器绝对路径推导需要挂载的工具链根目录。
+// resolve_tool 会在 /usr/local/go/bin、$HOME/.cargo/bin 等目录里找到 go/rustc，
+// 但沙箱只挂载固定的基础目录（/usr/bin、/usr/lib…）。若工具链位于非基础目录下，
+// execve 在沙箱内会 ENOENT → 编译必失败（CE）。此处把「bin 的父目录」（工具链根，
+// 含 bin/lib/…）作为额外只读挂载补上；已在基础挂载覆盖范围内的则返回空、无需重复。
+// compiler_path 已由 resolve_tool 经 realpath 规范化（rustup 会指向 ~/.rustup/toolchains/…）。
+std::vector<ns::MountEntry> toolchain_mounts(const std::string& compiler_path) {
+    if (compiler_path.empty() || compiler_path[0] != '/') return {};
+    // 基础挂载已覆盖的前缀，无需额外挂载。
+    for (const char* base : {"/usr/bin/", "/bin/", "/usr/lib/", "/usr/lib64/",
+                             "/lib/", "/lib64/", "/usr/libexec/", "/usr/share/"}) {
+        if (compiler_path.rfind(base, 0) == 0) return {};
+    }
+    // 去掉 "/bin/<exe>"，得到工具链根。
+    auto slash = compiler_path.find_last_of('/');
+    if (slash == std::string::npos) return {};
+    std::string bin_dir = compiler_path.substr(0, slash);         // …/bin
+    auto slash2 = bin_dir.find_last_of('/');
+    if (slash2 == std::string::npos || slash2 == 0) return {};
+    std::string root = bin_dir.substr(0, slash2);                 // 工具链根
+    if (root.empty() || root == "/usr" || root == "/") return {};
+    return {{root, root, false}};
 }
 
 // 编译阶段的默认资源限制：{cpu, wall, mem_mb, stack_mb, out_mb, max_proc, compile_ms}
@@ -86,6 +111,9 @@ std::vector<LanguageRuntimeConfig> build_configs() {
         // JVM 依赖：JDK 本体 + Debian 把 java.security 等配置放在 /etc/java-*
         c.extra_mounts = {{"/usr/lib/jvm", "/usr/lib/jvm", false},
                           {"/etc/alternatives", "/etc/alternatives", false},
+                          {"/etc/java", "/etc/java", false},
+                          {"/etc/crypto-policies", "/etc/crypto-policies", false},
+                          {"/etc/pki", "/etc/pki", false},
                           {"/etc/java-11-openjdk", "/etc/java-11-openjdk", false},
                           {"/etc/java-17-openjdk", "/etc/java-17-openjdk", false},
                           {"/etc/java-21-openjdk", "/etc/java-21-openjdk", false}};
@@ -106,7 +134,11 @@ std::vector<LanguageRuntimeConfig> build_configs() {
                          "GOCACHE=/tmp/gocache", "CGO_ENABLED=0"};
         c.seccomp_profile = SeccompProfile::Standard;
         c.extra_mounts = {{"/usr/lib/go", "/usr/lib/go", false}};
+        // 若 go 位于非基础目录（如 /usr/local/go/bin），补挂其工具链根（GOROOT）。
+        for (auto& m : toolchain_mounts(c.compiler_path)) c.extra_mounts.push_back(m);
         c.compile_limits = kCompileLimits;
+        c.compile_limits.cpu_time_ms = 60000;
+        c.compile_limits.wall_time_ms = 120000;
         cfgs.push_back(c);
     }
     {   // Rust
@@ -121,6 +153,9 @@ std::vector<LanguageRuntimeConfig> build_configs() {
         c.artifact_name = "solution";
         c.seccomp_profile = SeccompProfile::Standard;
         c.extra_mounts = {{"/usr/lib/rustlib", "/usr/lib/rustlib", false}};
+        // rustup 安装下 rustc 及其 std 库在 ~/.rustup/toolchains/<tc>/{bin,lib}；
+        // resolve_tool 已 realpath 到该真实路径，补挂工具链根即覆盖 bin+lib。
+        for (auto& m : toolchain_mounts(c.compiler_path)) c.extra_mounts.push_back(m);
         c.compile_limits = kCompileLimits;
         cfgs.push_back(c);
     }
@@ -137,6 +172,13 @@ const std::vector<LanguageRuntimeConfig>& configs() {
 std::string resolve_tool(const std::vector<std::string>& candidates) {
     auto is_exec = [](const std::string& p) {
         return !p.empty() && access(p.c_str(), X_OK) == 0;
+    };
+    auto canonical_exec = [&](const std::string& p) {
+        char resolved[PATH_MAX];
+        if (realpath(p.c_str(), resolved) != nullptr) {
+            return std::string(resolved);
+        }
+        return p;
     };
 
     std::vector<std::string> dirs;
@@ -157,12 +199,12 @@ std::string resolve_tool(const std::vector<std::string>& candidates) {
 
     for (const auto& cand : candidates) {
         if (cand.find('/') != std::string::npos) {
-            if (is_exec(cand)) return cand;
+            if (is_exec(cand)) return canonical_exec(cand);
             continue;
         }
         for (const auto& dir : dirs) {
             std::string full = dir + "/" + cand;
-            if (is_exec(full)) return full;
+            if (is_exec(full)) return canonical_exec(full);
         }
     }
     return "";
