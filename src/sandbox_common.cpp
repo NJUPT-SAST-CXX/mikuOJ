@@ -112,6 +112,18 @@ uint64_t file_size(const std::string& path) {
 
 namespace cppjudge {
 
+SandboxResult Sandbox::execute(const SandboxConfig& config) {
+    std::string error;
+    auto backend = make_sandbox("auto", error);
+    if (!backend) {
+        SandboxResult result;
+        result.verdict = Verdict::SE;
+        result.error_detail = "sandbox backend unavailable: " + error;
+        return result;
+    }
+    return backend->execute(config);
+}
+
 std::unique_ptr<SandboxBackend> make_sandbox(const std::string& type,
                                              std::string& error) {
 #if defined(__linux__)

@@ -1,8 +1,16 @@
 #pragma once
 
-// 沙箱后端的共享编排内部接口（不对外暴露）。
-// 两个平台后端（sandbox_linux.cpp / sandbox_darwin.cpp）复用这里的判决推导、
-// 环境构造与 argv 拼装，避免重复实现。
+// Sandbox Core 内部辅助接口（不对 CLI / Judge / Compiler 暴露）。
+//
+// 这里放置平台后端共用的“小而稳定”的编排工具：
+//   - 原始运行观测量 RawOutcome；
+//   - 从 RawOutcome + Limits 推导 Verdict；
+//   - 构造最小安全环境；
+//   - 构造 execve 所需 argv/envp 指针数组；
+//   - 统计输出文件大小。
+//
+// 真正的 namespace、mount、cgroup、seccomp、exec 和 wait 编排仍由
+// src/sandbox_linux.cpp 这样的具体后端实现。
 
 #include "cppjudge/common.h"
 #include "cppjudge/sandbox.h"
@@ -13,7 +21,11 @@
 
 namespace cppjudge::sandbox_detail {
 
-// 子进程结束后的原始观测量（平台后端负责填充）。
+// 子进程结束后的原始观测量。
+//
+// 平台后端负责填充这些字段；derive_verdict() 再根据统一优先级转换成
+// 对外的 Verdict。这样可以避免 Judge 层直接理解 wait status、signal 或
+// cgroup 细节。
 struct RawOutcome {
     bool     exited         = false;
     int      exit_code      = 0;
@@ -27,7 +39,7 @@ struct RawOutcome {
     uint64_t wall_time_ms   = 0;
     uint64_t memory_kb      = 0;       // 峰值 RSS
     uint64_t output_bytes   = 0;       // stdout 实际字节（0 = 未捕获）
-    bool     secure_backend = true;    // SIGSYS→SV 仅安全后端成立
+    bool     secure_backend = true;    // SIGSYS → SV 仅安全后端成立
 };
 
 // 由原始观测量 + 资源限制推导判决，并给出 output_truncated。
@@ -35,7 +47,10 @@ struct RawOutcome {
 Verdict derive_verdict(const RawOutcome& o, const Limits& limits,
                        bool& output_truncated);
 
-// 最小安全环境（PATH/HOME/LANG），绝不继承 host environ（修 D5）。
+// 最小安全环境（PATH/HOME/LANG/LC_ALL）。
+//
+// Sandbox Core 不继承宿主机完整环境，避免把代理、密钥路径、用户环境变量等
+// 非必要信息暴露给用户程序。确有必要的额外变量由 SandboxRequest::envp 显式传入。
 std::vector<std::string> minimal_env(const std::string& home_dir);
 
 // argv = [executable, req.argv..., nullptr]；storage 持有字符串所有权。
@@ -55,7 +70,10 @@ uint64_t file_size(const std::string& path);
 
 namespace cppjudge {
 
-// 平台后端工厂（由各平台 .cpp 定义，make_sandbox 分发）。
+// 平台后端工厂。
+//
+// make_sandbox() 只依赖这些工厂函数，不直接暴露具体后端类名。
+// 当前正式 OJ 路径在 Linux 上由 make_linux_ns_sandbox() 提供。
 #if defined(__linux__)
 std::unique_ptr<SandboxBackend> make_linux_ns_sandbox();     // 仅 Linux 安全后端
 #endif

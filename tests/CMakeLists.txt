@@ -11,9 +11,11 @@ include(GoogleTest)
 # ---- 平台无关模块单元测试（macOS + Linux 都能跑，无需 root）----
 set(CPPJUDGE_UNIT_TESTS
     comparator
+    compiler
     problem
     language
     logger
+    sandbox
 )
 
 # ---- Linux 隔离模块单元测试（Phase B，仅 Linux）----
