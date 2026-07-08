@@ -16,11 +16,12 @@ check() {
 }
 
 echo "=== security tests (backend=$SB) ==="
-check "network blocked"    tests/security/cases/bad_syscall.cpp       "Syscall Violation"
-check "fork bomb blocked"  tests/security/cases/fork_bomb.cpp         "Syscall Violation"
-check "malicious include"  tests/security/cases/malicious_include.cpp "Compile Error"
-check "memory bomb -> MLE" tests/security/cases/infinite_memory.cpp   "Memory Limit Exceeded"
+check "network blocked"      tests/security/cases/bad_syscall.cpp       "Syscall Violation"
+check "fork bomb blocked"    tests/security/cases/fork_bomb.cpp         "Syscall Violation"
+check "ptrace blocked"       tests/security/cases/ptrace_attach.cpp     "Syscall Violation"
+check "malicious include"    tests/security/cases/malicious_include.cpp "Compile Error"
+check "memory bomb -> MLE"   tests/security/cases/infinite_memory.cpp   "Memory Limit Exceeded"
 # read_passwd：/etc/passwd 不在沙箱内 → 输出为空 → 非 Accepted（无泄漏）
-check "no /etc/passwd leak" tests/security/cases/read_passwd.cpp      "Wrong Answer"
+check "no /etc/passwd leak"  tests/security/cases/read_passwd.cpp      "Wrong Answer"
 echo "=== $PASS passed, $FAIL failed ==="
 exit $FAIL

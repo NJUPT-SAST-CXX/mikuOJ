@@ -86,3 +86,29 @@ TEST(Seccomp, ViolationToString) {
     // syscall 0 在两个架构上都存在（x86_64=read, aarch64=io_setup），名称非空即可
     EXPECT_FALSE(Manager::violation_to_string(0).empty());
 }
+
+// ============================================================
+// 新增：编译 profile 需要 fork/vfork/wait4（编译工具用）
+// ============================================================
+TEST(Seccomp, CompileProfileAllowsProcessCreation) {
+    // 编译 profile 不应在任何 run profile 的白名单中，
+    // 但编译沙箱可单独激活（is_compile=true）。
+    // 验证 Strict run 不含 fork，确保编译 profile 不会意外泄露到运行阶段。
+    const auto& strict = Manager::allowlist_for_testing(SeccompProfile::Strict);
+    EXPECT_FALSE(contains(strict, "fork"));
+    EXPECT_FALSE(contains(strict, "vfork"));
+}
+
+// ============================================================
+// 新增：所有 profile 含 getrlimit/setrlimit（Go runtime 需要）
+// ============================================================
+TEST(Seccomp, ResourceLimitSyscallsInAllProfiles) {
+    for (auto p : {SeccompProfile::Strict, SeccompProfile::Standard,
+                   SeccompProfile::Extended, SeccompProfile::JVM}) {
+        const auto& l = Manager::allowlist_for_testing(p);
+        EXPECT_TRUE(contains(l, "getrlimit"))
+            << "profile " << static_cast<int>(p) << " missing getrlimit";
+        EXPECT_TRUE(contains(l, "setrlimit"))
+            << "profile " << static_cast<int>(p) << " missing setrlimit";
+    }
+}
