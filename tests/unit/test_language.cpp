@@ -59,3 +59,27 @@ TEST(LanguageTools, ResolveExisting) {
     EXPECT_FALSE(resolve_tool({"sh"}).empty());
     EXPECT_TRUE(resolve_tool({"definitely-not-a-real-tool-xyz123"}).empty());
 }
+
+// ============================================================
+// 新增：编译型语言都有编译器路径
+// ============================================================
+TEST(LanguageManager, CompiledLanguagesHaveCompilerPath) {
+    for (auto lang : LanguageManager::supported_languages()) {
+        const auto& rt = LanguageManager::get_runtime(lang);
+        if (rt.needs_compilation) {
+            EXPECT_FALSE(rt.compiler_path.empty())
+                << rt.name << " needs compilation but has empty compiler_path";
+        }
+    }
+}
+
+// ============================================================
+// 新增：所有语言都有额外挂载依赖
+// ============================================================
+TEST(LanguageManager, AllLanguagesHaveMountDeps) {
+    for (auto lang : LanguageManager::supported_languages()) {
+        const auto& rt = LanguageManager::get_runtime(lang);
+        EXPECT_FALSE(rt.extra_mounts.empty())
+            << rt.name << " has no extra_mounts";
+    }
+}
