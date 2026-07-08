@@ -132,7 +132,10 @@ SetupResult Manager::setup_rootfs(const std::vector<MountEntry>& entries,
     // 4b. 可写 /tmp（编译器 gcc/go/rustc/javac 需要临时目录）
     std::string tmp = new_root + "/tmp";
     mkdir(tmp.c_str(), 01777);
-    mount("tmpfs", tmp.c_str(), "tmpfs", MS_NOSUID | MS_NODEV, "size=256m,mode=1777");
+    if (mount("tmpfs", tmp.c_str(), "tmpfs",
+              MS_NOSUID | MS_NODEV, "size=256m,mode=1777") != 0) {
+        return fail("mount /tmp tmpfs");
+    }
 
     // 5. pivot_root
     std::string old_root = new_root + "/.old_root";
