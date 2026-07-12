@@ -262,7 +262,7 @@ SandboxResult LinuxNsSandbox::execute(const SandboxRequest& req) {
     ctx.req = &req;
     ctx.mounts = mounts;
     ctx.new_root = new_root;
-    ctx.profile = seccomp::profile_for_lang(req.lang);
+    ctx.profile = seccomp::Manager::profile_for_lang(req.lang);
     ctx.ready_w = ready_pipe[1];
     ctx.proceed_r = proceed_pipe[0];
     ctx.err_w = err_pipe[1];
