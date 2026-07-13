@@ -1,17 +1,12 @@
+
 #include "cppjudge/seccomp_manager.h"
-
 #include <seccomp.h>
-
 #include <cstdlib>
-
 namespace cppjudge::seccomp {
-
 namespace {
-
 // 按 syscall 名（而非架构相关的 SYS_* 宏）维护白名单：
 // 用 seccomp_syscall_resolve_name 在运行时解析，x86_64/aarch64 通用，
 // 某 arch 不存在的名字自动跳过（修 D18 可移植性）。
-
 // 运行时基础（C/C++ Strict）。始终含 execve/execveat。
 // 未列出的（socket/connect/ptrace/mount/bpf/...）默认拒绝 → 天然阻断网络与逃逸。
 std::vector<std::string> strict_names() {
@@ -43,7 +38,6 @@ std::vector<std::string> strict_names() {
         "getrlimit", "setrlimit",
     };
 }
-
 // Standard（Go/Rust）：多线程 + 调度 + epoll
 std::vector<std::string> standard_names() {
     std::vector<std::string> v = strict_names();
@@ -59,7 +53,6 @@ std::vector<std::string> standard_names() {
     }
     return v;
 }
-
 // Extended（Python 等）
 std::vector<std::string> extended_names() {
     std::vector<std::string> v = standard_names();
@@ -72,7 +65,6 @@ std::vector<std::string> extended_names() {
     }
     return v;
 }
-
 // JVM（Java/Kotlin/Scala）
 std::vector<std::string> jvm_names() {
     std::vector<std::string> v = extended_names();
@@ -94,7 +86,6 @@ std::vector<std::string> jvm_names() {
     }
     return v;
 }
-
 // 编译白名单（修 D6）：Extended + 进程创建/回收 + 文件写，供 gcc/go/javac/rustc。
 std::vector<std::string> compile_names() {
     std::vector<std::string> v = extended_names();
@@ -108,7 +99,6 @@ std::vector<std::string> compile_names() {
     }
     return v;
 }
-
 const std::vector<std::string>& run_names(SeccompProfile p) {
     static const std::vector<std::string> s = strict_names();
     static const std::vector<std::string> st = standard_names();
@@ -122,10 +112,8 @@ const std::vector<std::string>& run_names(SeccompProfile p) {
     }
     return s;
 }
-
 } // namespace
-
-SeccompProfile profile_for_lang(const std::string& lang) {
+SeccompProfile Manager::profile_for_lang(const std::string& lang) {
     if (lang == "c" || lang == "cpp" || lang == "c++") return SeccompProfile::Strict;
     if (lang == "go" || lang == "rust")                return SeccompProfile::Standard;
     if (lang == "java" || lang == "kotlin" || lang == "scala") return SeccompProfile::JVM;
@@ -134,25 +122,20 @@ SeccompProfile profile_for_lang(const std::string& lang) {
         return SeccompProfile::Extended;
     return SeccompProfile::Strict;  // 未知 → 最安全
 }
-
 bool Manager::install(SeccompProfile profile, bool is_compile) {
     scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_KILL_PROCESS);  // 默认拒绝
     if (ctx == nullptr) return false;
-
     static const std::vector<std::string> compile = compile_names();
     const std::vector<std::string>& names = is_compile ? compile : run_names(profile);
-
     for (const std::string& n : names) {
         int nr = seccomp_syscall_resolve_name(n.c_str());
         if (nr == __NR_SCMP_ERROR) continue;  // 本 arch 无此 syscall
         seccomp_rule_add(ctx, SCMP_ACT_ALLOW, nr, 0);
     }
-
     int rc = seccomp_load(ctx);
     seccomp_release(ctx);
     return rc == 0;
 }
-
 std::string Manager::violation_to_string(int syscall_num) {
     char* name = seccomp_syscall_resolve_num_arch(SCMP_ARCH_NATIVE, syscall_num);
     if (name != nullptr) {
@@ -162,9 +145,7 @@ std::string Manager::violation_to_string(int syscall_num) {
     }
     return "unknown(" + std::to_string(syscall_num) + ")";
 }
-
 const std::vector<std::string>& Manager::allowlist_for_testing(SeccompProfile p) {
     return run_names(p);
 }
-
 } // namespace cppjudge::seccomp

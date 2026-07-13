@@ -20,9 +20,6 @@
 
 namespace cppjudge::seccomp {
 
-// 由语言名选择运行时 profile（未知 → 最严格 Strict）。
-SeccompProfile profile_for_lang(const std::string& lang);
-
 class Manager {
 public:
     // 安装过滤器。约束：必须在子进程 execve 前、所有 setup syscall 之后调用。
@@ -34,7 +31,7 @@ public:
     // JVM profile 会放行 socket/connect 以兼容运行时，本项目依赖 CLONE_NEWNET
     // 提供空网络命名空间来阻断真实网络访问。
     static bool install(SeccompProfile profile, bool is_compile);
-
+static SeccompProfile profile_for_lang(const std::string& lang);
     // syscall 号 → 名称（SV 诊断用）。
     static std::string violation_to_string(int syscall_num);
 
